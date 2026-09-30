@@ -7,6 +7,7 @@ from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
+import config
 import database as db
 import game as g
 
@@ -16,12 +17,17 @@ GROUP = F.chat.type.in_({ChatType.GROUP, ChatType.SUPERGROUP})
 
 async def can_manage(bot: Bot, game: g.Game, uid: int) -> bool:
     """O'yin ochgan, guruh admini yoki bot admini."""
-    if uid == game.creator_id or await db.is_admin(uid):
+    if uid == game.creator_id or uid in config.OWNER_IDS:
         return True
     try:
         member = await bot.get_chat_member(game.chat_id, uid)
-        return member.status in ("creator", "administrator")
+        if member.status in ("creator", "administrator"):
+            return True
     except TelegramAPIError:
+        pass
+    try:
+        return await db.is_admin(uid)
+    except Exception:
         return False
 
 
@@ -43,8 +49,11 @@ async def cmd_game(message: Message, bot: Bot) -> None:
 @router.message(Command("go"), GROUP)
 async def cmd_go(message: Message, bot: Bot) -> None:
     game = g.GAMES.get(message.chat.id)
+    if game and game.status == "running":
+        await message.reply("ℹ️ O'yin allaqachon boshlangan.")
+        return
     if not game or game.status != "lobby":
-        await message.reply("ℹ️ Ro'yxatga olish ochiq emas.")
+        await message.reply("ℹ️ Ro'yxatga olish ochiq emas. Boshlash: /game")
         return
     if not await can_manage(bot, game, message.from_user.id):
         await message.reply("❌ Faqat o'yin ochgan yoki guruh admini boshlay oladi.")
@@ -109,6 +118,7 @@ async def cmd_stop(message: Message, bot: Bot) -> None:
     if game.task:
         game.task.cancel()
     g.GAMES.pop(message.chat.id, None)
+    await game._unpin_lobby()
     await message.answer("🛑 O'yin to'xtatildi.")
 
 
